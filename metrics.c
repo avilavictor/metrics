@@ -6,8 +6,6 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <dirent.h>
-#include <ctype.h>
 
 #define METRICS_LOG_FILE "metrics_debug.log"
 
@@ -72,56 +70,25 @@ long long get_total_cpu_ms(int process_pid) {
 }
 
 long get_total_memory_kb(int process_pid) {
-    long total_memory_kb = 0;
-    char task_dir[64];
-    snprintf(task_dir, sizeof(task_dir), "/proc/%d/task", process_pid);
-    
-    DIR *dir = opendir(task_dir);
-    if (dir == NULL) {
+    long memory_kb = 0;
+    char status_path[64];
+    snprintf(status_path, sizeof(status_path), "/proc/%d/status", process_pid);
+
+    FILE *fstatus = fopen(status_path, "r");
+    if (fstatus == NULL) {
         return 0;
     }
-    
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        // Skip . and .. entries
-        if (entry->d_name[0] == '.') {
-            continue;
-        }
-        
-        // Check if entry is numeric (task ID)
-        int is_numeric = 1;
-        for (int i = 0; entry->d_name[i] != '\0'; i++) {
-            if (!isdigit(entry->d_name[i])) {
-                is_numeric = 0;
-                break;
-            }
-        }
-        
-        if (!is_numeric) {
-            continue;
-        }
-        
-        char status_path[512];
-        snprintf(status_path, sizeof(status_path), "/proc/%d/task/%s/status", 
-                 process_pid, entry->d_name);
-        
-        FILE *fstatus = fopen(status_path, "r");
-        if (fstatus != NULL) {
-            char line[256];
-            while (fgets(line, sizeof(line), fstatus)) {
-                if (strncmp(line, "VmRSS:", 6) == 0) {
-                    long memory_kb = 0;
-                    sscanf(line + 6, "%ld", &memory_kb);
-                    total_memory_kb += memory_kb;
-                    break;
-                }
-            }
-            fclose(fstatus);
+
+    char line[256];
+    while (fgets(line, sizeof(line), fstatus)) {
+        if (strncmp(line, "VmRSS:", 6) == 0) {
+            sscanf(line + 6, "%ld", &memory_kb);
+            break;
         }
     }
-    
-    closedir(dir);
-    return total_memory_kb;
+    fclose(fstatus);
+
+    return memory_kb;
 }
 
 void sample_metrics(int process_pid, int sample_interval_ms, const char *output_path) {
@@ -131,14 +98,14 @@ void sample_metrics(int process_pid, int sample_interval_ms, const char *output_
         return;
     }
 
-    fprintf(fp, "timestamp,cpu_percent, cpu_total_ns,classifier_memory_kb\n");
+    fprintf(fp, "timestamp,cpu_percent,cpu_total_ms,classifier_memory_kb\n");
     fflush(fp);
 
     char stat_path[64];
     snprintf(stat_path, sizeof(stat_path), "/proc/%d/stat", process_pid);
     long memory_usage = 0;
-    long long actual_cpu_ns = 0;
-    long long last_cpu_ns = 0;
+    long long actual_cpu_ms = 0;
+    long long last_cpu_ms = 0;
     float cpu_usage = 0.0f;
 
     struct timespec time_last;
@@ -147,7 +114,7 @@ void sample_metrics(int process_pid, int sample_interval_ms, const char *output_
 
     int processed = 1U;
 
-    last_cpu_ns = get_total_cpu_ms(process_pid);
+    last_cpu_ms = get_total_cpu_ms(process_pid);
 
     clock_gettime(CLOCK_REALTIME, &time_last);
     time_captured = time_last;  // Inicializa time_captured para evitar uso de variável não inicializada
@@ -166,7 +133,7 @@ void sample_metrics(int process_pid, int sample_interval_ms, const char *output_
                                (time_now.tv_nsec - time_last.tv_nsec);
 
         if(delta_time > sample_interval_ms * 1000000LL) {
-            actual_cpu_ns = get_total_cpu_ms(process_pid);
+            actual_cpu_ms = get_total_cpu_ms(process_pid);
             memory_usage = get_total_memory_kb(process_pid);
         
             clock_gettime(CLOCK_REALTIME, &time_captured);
@@ -176,9 +143,9 @@ void sample_metrics(int process_pid, int sample_interval_ms, const char *output_
         if(processed == 0U) {
             long long sample_time = (time_captured.tv_sec - time_last.tv_sec) * 1000000000LL + 
                                (time_captured.tv_nsec - time_last.tv_nsec);
-            long long delta_cpu_ns = actual_cpu_ns - last_cpu_ns;
-            cpu_usage = (float)delta_cpu_ns / (float)(sample_time/1000000LL) * 100.0f;
-            last_cpu_ns = actual_cpu_ns;
+            long long delta_cpu_ms = actual_cpu_ms - last_cpu_ms;
+            cpu_usage = (float)delta_cpu_ms / (float)(sample_time/1000000LL) * 100.0f;
+            last_cpu_ms = actual_cpu_ms;
             time_last = time_captured;
             processed = 1U;
 
@@ -188,9 +155,11 @@ void sample_metrics(int process_pid, int sample_interval_ms, const char *output_
             strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
             long milliseconds = time_captured.tv_nsec / 1000000;
 
-            fprintf(fp, "%s.%03ld,%.2f,%lld,%ld\n", timestamp, milliseconds, cpu_usage, actual_cpu_ns, memory_usage);
+            fprintf(fp, "%s.%03ld,%.2f,%lld,%ld\n", timestamp, milliseconds, cpu_usage, actual_cpu_ms, memory_usage);
             fflush(fp);      
         }
+
+        usleep(1000); // 1ms
     }
 
     fclose(fp);
