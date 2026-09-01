@@ -309,10 +309,15 @@ void sample_metrics(int process_pid, int sample_interval_ms, const char *output_
         }
 
         if(processed == 0U) {
-            long long sample_time = (time_captured.tv_sec - time_last.tv_sec) * 1000000000LL +
+            long long sample_time_ns = (time_captured.tv_sec - time_last.tv_sec) * 1000000000LL +
                                (time_captured.tv_nsec - time_last.tv_nsec);
             long long delta_cpu_ms = actual_cpu_ms - last_cpu_ms;
-            cpu_usage = (float)delta_cpu_ms / (float)(sample_time/1000000LL) * 100.0f;
+            
+            // CPU % calculation: max 100% per core (so 200% on 2 cores)
+            // Formula: (delta_cpu_ms / sample_time_ms) * 100
+            float sample_time_ms = (float)sample_time_ns / 1000000.0f;
+            cpu_usage = (float)delta_cpu_ms / sample_time_ms * 100.0f;
+            
             last_cpu_ms = actual_cpu_ms;
             time_last = time_captured;
             processed = 1U;
@@ -352,6 +357,10 @@ void sample_system_metrics(int sample_interval_ms, const char *output_path) {
     long memory_usage_kb = 0;
     float cpu_temperature_c = 0.0f;
     long cpu_frequency_khz = 0;
+    long clk_tck = sysconf(_SC_CLK_TCK);
+    if (clk_tck <= 0) {
+        clk_tck = 100;
+    }
 
     if (!read_cpu_stat_snapshot(&last_cpu)) {
         log_message("ERROR", "Unable to read initial system CPU stats");
@@ -372,15 +381,18 @@ void sample_system_metrics(int sample_interval_ms, const char *output_path) {
                 break;
             }
 
-            unsigned long long delta_total_ticks = cpu_snapshot_total_ticks(&current_cpu) - cpu_snapshot_total_ticks(&last_cpu);
             unsigned long long delta_active_ticks = cpu_snapshot_active_ticks(&current_cpu) - cpu_snapshot_active_ticks(&last_cpu);
-            long clk_tck = sysconf(_SC_CLK_TCK);
-            if (clk_tck <= 0) {
-                clk_tck = 100;
-            }
+            unsigned long long delta_total_ticks = cpu_snapshot_total_ticks(&current_cpu) - cpu_snapshot_total_ticks(&last_cpu);
 
-            if (delta_total_ticks > 0) {
-                cpu_percent = ((float)delta_active_ticks / (float)delta_total_ticks) * 100.0f;
+            // Convert ticks to milliseconds for this sample period
+            long long delta_active_ms = (delta_active_ticks * 1000LL) / clk_tck;
+            
+            // CPU percentage: max 100% per core (so 200% on 2 cores)
+            // Formula: (delta_active_ms / sample_time_ms) * 100
+            float delta_time_ms = (float)delta_time_ns / 1000000.0f;
+            
+            if (delta_time_ms > 0.0f) {
+                cpu_percent = ((float)delta_active_ms / delta_time_ms) * 100.0f;
             } else {
                 cpu_percent = 0.0f;
             }
