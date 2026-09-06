@@ -285,7 +285,7 @@ void sample_metrics(int process_pid, int sample_interval_ms, const char *output_
 
     last_cpu_ms = get_total_cpu_ms(process_pid);
 
-    clock_gettime(CLOCK_REALTIME, &time_last);
+    clock_gettime(CLOCK_MONOTONIC, &time_last);
     time_captured = time_last;
 
     while (1) {
@@ -295,7 +295,7 @@ void sample_metrics(int process_pid, int sample_interval_ms, const char *output_
             break;
         }
 
-        clock_gettime(CLOCK_REALTIME, &time_now);
+        clock_gettime(CLOCK_MONOTONIC, &time_now);
 
         long long delta_time = (time_now.tv_sec - time_last.tv_sec) * 1000000000LL +
                                (time_now.tv_nsec - time_last.tv_nsec);
@@ -304,7 +304,7 @@ void sample_metrics(int process_pid, int sample_interval_ms, const char *output_
             actual_cpu_ms = get_total_cpu_ms(process_pid);
             memory_usage = get_total_memory_kb(process_pid);
 
-            clock_gettime(CLOCK_REALTIME, &time_captured);
+            clock_gettime(CLOCK_MONOTONIC, &time_captured);
             processed = 0U;
         }
 
@@ -330,9 +330,17 @@ void sample_metrics(int process_pid, int sample_interval_ms, const char *output_
             fprintf(fp, "%s.%03ld,%.2f,%lld,%ld\n", timestamp, milliseconds, cpu_usage, actual_cpu_ms, memory_usage);
             fflush(fp);
         }
+        clock_gettime(CLOCK_MONOTONIC, &time_now);
+        long long elapsed_ns = (time_now.tv_sec - time_captured.tv_sec) * 1000000000LL +
+                               (time_now.tv_nsec - time_captured.tv_nsec);
+        long long sleep_ns = (long long)sample_interval_ms * 1000000LL - elapsed_ns;
 
-        usleep(1000);
+        if (sleep_ns > 0) {
+            struct timespec sleep_ts = { sleep_ns / 1000000000LL, sleep_ns % 1000000000LL };
+            nanosleep(&sleep_ts, NULL);
+        }
     }
+
 
     fclose(fp);
     log_message("INFO", "Sampling complete");
@@ -368,10 +376,10 @@ void sample_system_metrics(int sample_interval_ms, const char *output_path) {
         return;
     }
 
-    clock_gettime(CLOCK_REALTIME, &time_last);
+    clock_gettime(CLOCK_MONOTONIC, &time_last);
 
     while (1) {
-        clock_gettime(CLOCK_REALTIME, &time_now);
+        clock_gettime(CLOCK_MONOTONIC, &time_now);
         long long delta_time_ns = (time_now.tv_sec - time_last.tv_sec) * 1000000000LL +
                                   (time_now.tv_nsec - time_last.tv_nsec);
 
