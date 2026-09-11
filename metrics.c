@@ -428,8 +428,14 @@ void sample_system_metrics(int sample_interval_ms, const char *output_path) {
             last_cpu = current_cpu;
             time_last = time_now;
         }
+        clock_gettime(CLOCK_MONOTONIC, &time_now);
+        long long elapsed_ns = (time_now.tv_sec - time_last.tv_sec) * 1000000000LL +
+                               (time_now.tv_nsec - time_last.tv_nsec);
+        long long sleep_ns = (long long)sample_interval_ms * 1000000LL - elapsed_ns;
 
-        usleep(1000);
+        if (sleep_ns > 0) {
+            struct timespec sleep_ts = { sleep_ns / 1000000000LL, sleep_ns % 1000000000LL };
+            nanosleep(&sleep_ts, NULL);
     }
 
     fclose(fp);
