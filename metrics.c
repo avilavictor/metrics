@@ -436,6 +436,7 @@ void sample_system_metrics(int sample_interval_ms, const char *output_path) {
         if (sleep_ns > 0) {
             struct timespec sleep_ts = { sleep_ns / 1000000000LL, sleep_ns % 1000000000LL };
             nanosleep(&sleep_ts, NULL);
+        }
     }
 
     fclose(fp);
